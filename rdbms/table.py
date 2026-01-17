@@ -19,7 +19,8 @@ class Table:
     VALID_TYPES = {'INT', 'TEXT', 'FLOAT', 'BOOL'}
 
     def __init__(self, name: str, columns: List[str], types: List[str],
-                 primary_key: Optional[str] = None):
+                 primary_key: Optional[str] = None,
+                 unique_constraints: Optional[List[str]] = None):
         """
         Initialize a new table.
 
@@ -28,6 +29,7 @@ class Table:
             columns: List of column names
             types: List of column types (must match VALID_TYPES)
             primary_key: Name of the primary key column (optional)
+            unique_constraints: List of column names with unique constraints (optional)
 
         Raises:
             ValueError: If validation fails
@@ -64,7 +66,16 @@ class Table:
                 raise ValueError(f"Primary key column '{primary_key}' does not exist in table")
 
         self.primary_key = primary_key
-        self.unique_constraints: List[str] = []
+
+        # Validate unique constraint columns exist
+        if unique_constraints is None:
+            unique_constraints = []
+
+        for col in unique_constraints:
+            if col not in columns:
+                raise ValueError(f"Unique constraint column '{col}' does not exist in table")
+
+        self.unique_constraints: List[str] = unique_constraints
         self.indexes: Dict[str, Dict[Any, List[int]]] = {}
 
     def validate_value(self, value: Any, expected_type: str) -> bool:
@@ -163,10 +174,10 @@ class Table:
             data['name'],
             data['columns'],
             data['types'],
-            primary_key=data.get('primary_key')
+            primary_key=data.get('primary_key'),
+            unique_constraints=data.get('unique_constraints', [])
         )
         table.rows = data.get('rows', [])
-        table.unique_constraints = data.get('unique_constraints', [])
         table.indexes = data.get('indexes', {})
 
         return table
@@ -208,8 +219,28 @@ class Table:
                 if existing_row[pk_idx] == pk_value:
                     raise ValueError(f"Duplicate primary key value: {pk_value}")
 
+        # Check unique constraints
+        for unique_col in self.unique_constraints:
+            col_idx = self.get_column_index(unique_col)
+            value = row[col_idx]
+
+            # Check for duplicate unique value
+            for existing_row in self.rows:
+                if existing_row[col_idx] == value:
+                    raise ValueError(f"Duplicate value for unique column '{unique_col}': {value}")
+
         # Add the row
+        row_position = len(self.rows)
         self.rows.append(row)
+
+        # Update indexes
+        for col_name, index in self.indexes.items():
+            col_idx = self.get_column_index(col_name)
+            value = row[col_idx]
+
+            if value not in index:
+                index[value] = []
+            index[value].append(row_position)
 
         return True
 
@@ -319,9 +350,18 @@ class Table:
                 if not should_update and row[pk_idx] == new_pk_value:
                     raise ValueError(f"Duplicate primary key value: {new_pk_value}")
 
+        # Check if updating unique constraint columns
+        unique_checks = {}
+        for unique_col in self.unique_constraints:
+            if unique_col in set_values:
+                col_idx = self.get_column_index(unique_col)
+                new_value = set_values[unique_col]
+                unique_checks[col_idx] = (unique_col, new_value)
+
         # Update matching rows
         rows_updated = 0
         updated_pk_values = set()
+        updated_unique_values = {col_idx: set() for col_idx in unique_checks.keys()}
 
         for row in self.rows:
             # Check if row matches WHERE conditions
@@ -342,6 +382,26 @@ class Table:
                 if new_pk_value in updated_pk_values:
                     raise ValueError(f"Duplicate primary key value: {new_pk_value}")
                 updated_pk_values.add(new_pk_value)
+
+            # If updating unique columns, check for duplicates
+            for col_idx, (col_name, new_value) in unique_checks.items():
+                # Check against rows that won't be updated
+                for other_row in self.rows:
+                    should_update_other = True
+                    if where is not None:
+                        for where_col, where_val in where.items():
+                            other_col_idx = self.get_column_index(where_col)
+                            if other_row[other_col_idx] != where_val:
+                                should_update_other = False
+                                break
+
+                    if not should_update_other and other_row[col_idx] == new_value:
+                        raise ValueError(f"Duplicate value for unique column '{col_name}': {new_value}")
+
+                # Check against already updated rows
+                if new_value in updated_unique_values[col_idx]:
+                    raise ValueError(f"Duplicate value for unique column '{col_name}': {new_value}")
+                updated_unique_values[col_idx].add(new_value)
 
             # Update the row
             for col_idx, new_value in update_indices.items():
@@ -395,7 +455,50 @@ class Table:
         # Replace rows with filtered list
         self.rows = rows_to_keep
 
+        # Rebuild all indexes (simpler than tracking changes)
+        for col_name in list(self.indexes.keys()):
+            self.create_index(col_name)
+
         return rows_deleted
+
+    def create_index(self, column_name: str) -> None:
+        """
+        Create a hash-based index on a column for fast lookups.
+
+        Args:
+            column_name: Name of the column to index
+
+        Raises:
+            ValueError: If column doesn't exist
+        """
+        col_idx = self.get_column_index(column_name)
+
+        # Build the index: value -> list of row positions
+        index: Dict[Any, List[int]] = {}
+
+        for row_pos, row in enumerate(self.rows):
+            value = row[col_idx]
+
+            if value not in index:
+                index[value] = []
+            index[value].append(row_pos)
+
+        self.indexes[column_name] = index
+
+    def drop_index(self, column_name: str) -> None:
+        """
+        Drop an index on a column.
+
+        Args:
+            column_name: Name of the column
+
+        Raises:
+            ValueError: If index doesn't exist
+        """
+        if column_name not in self.indexes:
+            raise ValueError(f"Index on column '{column_name}' does not exist")
+
+        del self.indexes[column_name]
 
     def __repr__(self) -> str:
         """String representation of the table"""
