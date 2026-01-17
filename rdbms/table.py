@@ -3,7 +3,7 @@ from enum import Enum
 
 
 class DataType(Enum):
-    """ Supported data types for table columns. """
+    """Supported data types in the RDBMS"""
     INT = "INT"
     TEXT = "TEXT"
     FLOAT = "FLOAT"
@@ -12,20 +12,22 @@ class DataType(Enum):
 
 class Table:
     """
-    Represents a db table with schema and data
-    Handles column definitions, type validation and data storage
+    Represents a database table with schema and data.
+    Handles column definitions, type validation, and data storage.
     """
 
     VALID_TYPES = {'INT', 'TEXT', 'FLOAT', 'BOOL'}
 
-    def __init__(self, name: str, columns: List[str], types: List[str]):
+    def __init__(self, name: str, columns: List[str], types: List[str],
+                 primary_key: Optional[str] = None):
         """
-        Initialize a new table
+        Initialize a new table.
 
         Args:
             name: Name of the table
             columns: List of column names
-            types: List of data types corresponding to columns
+            types: List of column types (must match VALID_TYPES)
+            primary_key: Name of the primary key column (optional)
 
         Raises:
             ValueError: If validation fails
@@ -56,21 +58,25 @@ class Table:
         self.types = types
         self.rows: List[List[Any]] = []
 
-        # Additional schema attributes
-        self.primary_key: Optional[str] = None
+        # Validate primary key column exists
+        if primary_key is not None:
+            if primary_key not in columns:
+                raise ValueError(f"Primary key column '{primary_key}' does not exist in table")
+
+        self.primary_key = primary_key
         self.unique_constraints: List[str] = []
         self.indexes: Dict[str, Dict[Any, List[int]]] = {}
 
     def validate_value(self, value: Any, expected_type: str) -> bool:
         """
-        Validate that a value matches the expected type
+        Validate that a value matches the expected type.
 
         Args:
             value: The value to validate
-            expected_type: The expected data type as a string
+            expected_type: Expected type string (INT, TEXT, FLOAT, BOOL)
 
         Returns:
-            True if value matches expected type, False otherwise
+            True if value matches type, False otherwise
         """
         if expected_type == 'INT':
             return isinstance(value, int) and not isinstance(value, bool)
@@ -88,7 +94,7 @@ class Table:
 
     def validate_row(self, row: List[Any]) -> bool:
         """
-        Validate a row has correct number of values and correct types
+        Validate that a row has correct number of values and correct types.
 
         Args:
             row: List of values representing a row
@@ -109,7 +115,7 @@ class Table:
 
     def get_column_index(self, column_name: str) -> int:
         """
-        Get the index of a column by name
+        Get the index of a column by name.
 
         Args:
             column_name: Name of the column
@@ -118,7 +124,7 @@ class Table:
             Index of the column
 
         Raises:
-            ValueError: If column does not exist
+            ValueError: If column doesn't exist
         """
         try:
             return self.columns.index(column_name)
@@ -127,7 +133,7 @@ class Table:
 
     def to_dict(self) -> Dict[str, Any]:
         """
-        Convert table to dictionary format for storage
+        Convert table to dictionary format for storage.
 
         Returns:
             Dictionary representation of the table
@@ -145,25 +151,252 @@ class Table:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'Table':
         """
-        Create a table from dictionary format
+        Create a table from dictionary format.
 
         Args:
-            data: Dictionary representation of the table
+            data: Dictionary containing table data
 
         Returns:
             Table instance
         """
-        table = cls(data['name'], data['columns'], data['types'])
+        table = cls(
+            data['name'],
+            data['columns'],
+            data['types'],
+            primary_key=data.get('primary_key')
+        )
         table.rows = data.get('rows', [])
-        table.primary_key = data.get('primary_key')
         table.unique_constraints = data.get('unique_constraints', [])
         table.indexes = data.get('indexes', {})
 
         return table
 
+    def insert(self, row: List[Any]) -> bool:
+        """
+        Insert a new row into the table.
+
+        Args:
+            row: List of values to insert
+
+        Returns:
+            True if insertion successful
+
+        Raises:
+            ValueError: If row validation fails
+        """
+        # Validate row length
+        if len(row) != len(self.columns):
+            raise ValueError(
+                f"Expected {len(self.columns)} values, got {len(row)}"
+            )
+
+        # Validate each value type
+        for i, (value, col_type, col_name) in enumerate(zip(row, self.types, self.columns)):
+            if not self.validate_value(value, col_type):
+                raise ValueError(
+                    f"Invalid type for column '{col_name}': expected {col_type}, "
+                    f"got {type(value).__name__}"
+                )
+
+        # Check primary key constraint
+        if self.primary_key is not None:
+            pk_idx = self.get_column_index(self.primary_key)
+            pk_value = row[pk_idx]
+
+            # Check for duplicate primary key
+            for existing_row in self.rows:
+                if existing_row[pk_idx] == pk_value:
+                    raise ValueError(f"Duplicate primary key value: {pk_value}")
+
+        # Add the row
+        self.rows.append(row)
+
+        return True
+
+    def select(self, columns: Optional[List[str]] = None,
+               where: Optional[Dict[str, Any]] = None) -> List[List[Any]]:
+        """
+        Select rows from the table.
+
+        Args:
+            columns: List of column names to return (None = all columns)
+            where: Dictionary of column:value pairs for filtering (AND logic)
+
+        Returns:
+            List of rows matching the criteria
+
+        Raises:
+            ValueError: If column names are invalid
+        """
+        # If no columns specified, return all columns
+        if columns is None:
+            columns = self.columns.copy()
+
+        # Validate all requested columns exist
+        column_indices = []
+        for col in columns:
+            column_indices.append(self.get_column_index(col))
+
+        # Filter rows based on WHERE conditions
+        filtered_rows = []
+
+        for row in self.rows:
+            # Check if row matches WHERE conditions
+            if where is not None:
+                match = True
+                for where_col, where_val in where.items():
+                    col_idx = self.get_column_index(where_col)
+                    if row[col_idx] != where_val:
+                        match = False
+                        break
+
+                if not match:
+                    continue
+
+            # Extract requested columns from the row
+            result_row = [row[idx] for idx in column_indices]
+            filtered_rows.append(result_row)
+
+        return filtered_rows
+
+    def update(self, set_values: Dict[str, Any],
+               where: Optional[Dict[str, Any]] = None) -> int:
+        """
+        Update rows in the table.
+
+        Args:
+            set_values: Dictionary of column:value pairs to update
+            where: Dictionary of column:value pairs for filtering (None = update all)
+
+        Returns:
+            Number of rows updated
+
+        Raises:
+            ValueError: If validation fails
+        """
+        # Validate we have something to update
+        if not set_values:
+            raise ValueError("Must specify at least one column to update")
+
+        # Validate all columns exist and types are correct
+        update_indices = {}
+        for col_name, new_value in set_values.items():
+            col_idx = self.get_column_index(col_name)
+            col_type = self.types[col_idx]
+
+            # Validate type
+            if not self.validate_value(new_value, col_type):
+                raise ValueError(
+                    f"Invalid type for column '{col_name}': expected {col_type}, "
+                    f"got {type(new_value).__name__}"
+                )
+
+            update_indices[col_idx] = new_value
+
+        # Validate WHERE columns if provided
+        if where is not None:
+            for where_col in where.keys():
+                self.get_column_index(where_col)  # Just validate it exists
+
+        # Check if updating primary key
+        pk_idx = None
+        if self.primary_key is not None and self.primary_key in set_values:
+            pk_idx = self.get_column_index(self.primary_key)
+            new_pk_value = set_values[self.primary_key]
+
+            # Check for duplicate primary key in existing rows
+            for row in self.rows:
+                # Skip rows that will be updated
+                should_update = True
+                if where is not None:
+                    for where_col, where_val in where.items():
+                        col_idx = self.get_column_index(where_col)
+                        if row[col_idx] != where_val:
+                            should_update = False
+                            break
+
+                # If this row won't be updated and has the new PK value, it's a duplicate
+                if not should_update and row[pk_idx] == new_pk_value:
+                    raise ValueError(f"Duplicate primary key value: {new_pk_value}")
+
+        # Update matching rows
+        rows_updated = 0
+        updated_pk_values = set()
+
+        for row in self.rows:
+            # Check if row matches WHERE conditions
+            if where is not None:
+                match = True
+                for where_col, where_val in where.items():
+                    col_idx = self.get_column_index(where_col)
+                    if row[col_idx] != where_val:
+                        match = False
+                        break
+
+                if not match:
+                    continue
+
+            # If updating primary key, check for duplicates among updated rows
+            if pk_idx is not None:
+                new_pk_value = update_indices[pk_idx]
+                if new_pk_value in updated_pk_values:
+                    raise ValueError(f"Duplicate primary key value: {new_pk_value}")
+                updated_pk_values.add(new_pk_value)
+
+            # Update the row
+            for col_idx, new_value in update_indices.items():
+                row[col_idx] = new_value
+
+            rows_updated += 1
+
+        return rows_updated
+
+    def delete(self, where: Optional[Dict[str, Any]] = None) -> int:
+        """
+        Delete rows from the table.
+
+        Args:
+            where: Dictionary of column:value pairs for filtering (None = delete all)
+
+        Returns:
+            Number of rows deleted
+
+        Raises:
+            ValueError: If column names are invalid
+        """
+        # Validate WHERE columns if provided
+        if where is not None:
+            for where_col in where.keys():
+                self.get_column_index(where_col)  # Just validate it exists
+
+        # Find rows to delete
+        rows_to_keep = []
+        rows_deleted = 0
+
+        for row in self.rows:
+            # Check if row matches WHERE conditions
+            should_delete = True
+
+            if where is not None:
+                match = True
+                for where_col, where_val in where.items():
+                    col_idx = self.get_column_index(where_col)
+                    if row[col_idx] != where_val:
+                        match = False
+                        break
+
+                should_delete = match
+
+            if should_delete:
+                rows_deleted += 1
+            else:
+                rows_to_keep.append(row)
+
+        # Replace rows with filtered list
+        self.rows = rows_to_keep
+
+        return rows_deleted
+
     def __repr__(self) -> str:
-        """
-        String representation of the table
-        """
+        """String representation of the table"""
         return f"Table(name='{self.name}', columns={self.columns}, rows={len(self.rows)})"
-    
