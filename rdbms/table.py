@@ -500,6 +500,42 @@ class Table:
 
         del self.indexes[column_name]
 
+    def join(self, right_table: 'Table', left_column: str, right_column: str) -> List[List[Any]]:
+        """
+        Perform an INNER JOIN with another table.
+
+        Args:
+            right_table: The table to join with
+            left_column: Column name from this table to join on
+            right_column: Column name from right table to join on
+
+        Returns:
+            List of combined rows where join condition matches
+
+        Raises:
+            ValueError: If column names are invalid
+        """
+        # Validate columns exist
+        left_col_idx = self.get_column_index(left_column)
+        right_col_idx = right_table.get_column_index(right_column)
+
+        # Perform nested loop join (simple but works)
+        results = []
+
+        for left_row in self.rows:
+            left_value = left_row[left_col_idx]
+
+            for right_row in right_table.rows:
+                right_value = right_row[right_col_idx]
+
+                # Check if values match
+                if left_value == right_value:
+                    # Combine rows: all columns from left + all columns from right
+                    combined_row = left_row + right_row
+                    results.append(combined_row)
+
+        return results
+
     def __repr__(self) -> str:
         """String representation of the table"""
         return f"Table(name='{self.name}', columns={self.columns}, rows={len(self.rows)})"
