@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  # REPL Service (Interactive CLI)
+  repl:
+    build: .
+    container_name: simple-rdbms-repl
+    stdin_open: true #enable interactive mode
+    tty: true        #keep the terminal open
+    volumes:
+      - rdbms-data:/app/data
+    command: python -m rdbms.repl
+    profiles:
+      - repl # Only start when explicitly requested
+
+  # API Service (FastAPI Web Server)
+  api:
+    build: .
+    container_name: simple-rdbms-api
+    ports:
+      - "8000:8000"
+    volumes:
+        - rdbms-data:/app/data # share data with REPL service
+    command: python webapp/api.py
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+      - DATA_PATH=/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+# Named volume for data persistence
+volumes:
+  rdbms-data:
+      driver: local

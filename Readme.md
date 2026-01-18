@@ -12,6 +12,7 @@ A educational implementation of a relational database management system built fr
 - [Usage Guide](#usage-guide)
   - [REPL Interface](#repl-interface)
   - [REST API](#rest-api)
+- [Docker Usage](#docker-usage)
 - [Testing](#testing)
 - [Future Enhancements](#future-enhancements)
 - [Contributing](#contributing)
@@ -449,6 +450,29 @@ curl -X DELETE http://localhost:8000/rows \
 {
   "detail": "Table 'users' already exists"
 }
+```
+
+## Docker Usage
+### Quick Commands
+
+```bash
+# Build the Docker images
+docker compose build
+
+# Run API (background)
+docker compose up -d api
+
+# Run REPL (interactive)
+docker compose run --rm repl
+
+# View API logs
+docker compose logs -f api
+
+# Stop all services
+docker compose down
+
+# Remove all data
+docker compose down -v
 ```
 
 ## Testing

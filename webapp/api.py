@@ -1,5 +1,6 @@
 """Simple FastAPI web application for the RDBMS."""
 
+import os
 import sys
 from pathlib import Path
 
@@ -7,6 +8,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional, Any, Dict
 
@@ -14,8 +16,18 @@ from rdbms.repl import Database
 
 app = FastAPI(title="Simple RDBMS API")
 
-# Initialize database
-db = Database('data')
+# NEW: Add CORS middleware for browser access
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Use environment variable for data path
+DATA_PATH = os.getenv('DATA_PATH', 'data')
+db = Database(DATA_PATH)
 
 
 # Pydantic models for request/response
@@ -54,14 +66,27 @@ def read_root():
     """Root endpoint."""
     return {
         "message": "Simple RDBMS API",
+        "version": "1.0.0",
         "endpoints": {
             "tables": "/tables",
             "create_table": "/tables (POST)",
             "insert": "/rows (POST)",
             "query": "/query (POST)",
             "update": "/rows (PUT)",
-            "delete": "/rows (DELETE)"
+            "delete": "/rows (DELETE)",
+            "health": "/health"
         }
+    }
+
+
+# health check endpoint
+@app.get("/health")
+def health_check():
+    """Health check endpoint for Docker."""
+    return {
+        "status": "healthy",
+        "data_path": DATA_PATH,
+        "tables": len(db.tables)
     }
 
 
@@ -241,4 +266,19 @@ def get_table_info(table_name: str):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+
+    # Use environment variables for host and port
+    host = os.getenv('HOST', '0.0.0.0')
+    port = int(os.getenv('PORT', 8000))
+
+    # Determine the display URL (0.0.0.0 is not accessible from browser)
+    display_host = 'localhost' if host == '0.0.0.0' else host
+
+    print(f"Starting Simple RDBMS API on {host}:{port}")
+    print(f"Data directory: {DATA_PATH}")
+    print(f"\nAPI is running!")
+    print(f"API Documentation: http://{display_host}:{port}/docs")
+    print(f"Interactive API: http://{display_host}:{port}/redoc")
+    print(f"Health Check: http://{display_host}:{port}/health\n")
+
+    uvicorn.run(app, host=host, port=port)
